@@ -487,9 +487,9 @@ function AddTaskModal({ currentUser, onAdd, onClose }) {
             style={{
               width: "100%", padding: "9px 14px 22px", borderRadius: 9,
               background: "rgba(255,255,255,0.85)", border: `1px solid ${C.borderCard}`,
-              color: C.textPrimary, fontSize: 12.5, outline: "none", resize: "none",
+              color: C.textSecondary, fontSize: 12.5, outline: "none", resize: "none",
               boxSizing: "border-box", fontFamily: "inherit", fontStyle: "italic",
-              color: C.textSecondary, lineHeight: 1.5,
+              lineHeight: 1.5,
             }}
           />
           <span style={{
