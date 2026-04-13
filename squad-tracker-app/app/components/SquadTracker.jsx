@@ -646,6 +646,15 @@ export default function SquadTracker() {
   const [showSummary, setShowSummary]     = useState(false);
   const [activeCategory, setActiveCategory] = useState("Todas");
   const [tick, setTick]               = useState(0);
+  const [isMobile, setIsMobile]       = useState(false);   // ← client-side detection
+
+  // Detectar mobile SOLO en el cliente
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < 768);
+    check();
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
+  }, []);
 
   // Polling 5s
   useEffect(() => {
@@ -701,10 +710,8 @@ export default function SquadTracker() {
     db.delete("subtasks", subId);
   }
 
-  // Progreso global = App Nahueroute
   const nahueTasks = tasks.filter(t => t.category === "App Nahueroute");
   const globalPct  = calcProgress(nahueTasks.length ? nahueTasks : tasks);
-
   const allCategories = ["Todas", ...CATEGORIES.filter(c => tasks.some(t => t.category === c))];
   const filtered = activeCategory === "Todas" ? tasks : tasks.filter(t => t.category === activeCategory);
   const grouped  = CATEGORIES.reduce((acc, cat) => {
@@ -712,7 +719,6 @@ export default function SquadTracker() {
     if (ct.length) acc[cat] = ct;
     return acc;
   }, {});
-
   const done = tasks.filter(t => t.status === "done").length;
 
   // ── LOGIN ────────────────────────────────────────────────
@@ -793,7 +799,201 @@ export default function SquadTracker() {
 
   const userColor = TEAM_COLORS[currentUser];
 
-  // ── DASHBOARD ────────────────────────────────────────────
+  // ── TASK GRID compartido ──────────────────────────────────
+  const taskGrid = (
+    <>
+      {Object.keys(grouped).length === 0 && (
+        <div style={{ textAlign: "center", padding: "70px 0", color: C.textMuted, fontFamily: "monospace", fontSize: 12 }}>
+          Sin tareas todavía — ¡presiona &quot;+ Tarea&quot;!
+        </div>
+      )}
+      {Object.entries(grouped).map(([cat, catTasks]) => {
+        const catPct  = calcProgress(catTasks);
+        const isNahue = cat === "App Nahueroute";
+        return (
+          <div key={cat} style={{
+            ...glass, borderRadius: 16, padding: 16, overflow: "hidden",
+            ...(isNahue ? { borderTop: `2px solid ${C.emerald}` } : {}),
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                <span style={{ fontSize: 15 }}>{CAT_ICONS[cat]}</span>
+                <span style={{ fontFamily: "var(--font-space-grotesk), sans-serif", fontWeight: 700, fontSize: 13, color: C.textPrimary }}>{cat}</span>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 10, color: C.textMuted, fontFamily: "monospace" }}>
+                  {catTasks.filter(t => t.status === "done").length}/{catTasks.length}
+                </span>
+                <div style={{ width: 40, height: 4, borderRadius: 4, background: "rgba(94,125,90,0.12)", overflow: "hidden" }}>
+                  <div style={{
+                    height: "100%", width: `${catPct}%`,
+                    background: isNahue
+                      ? `linear-gradient(90deg, ${C.greenLichen}, ${C.emerald})`
+                      : `linear-gradient(90deg, ${userColor}88, ${userColor})`,
+                    borderRadius: 4, transition: "width 0.8s",
+                  }} />
+                </div>
+              </div>
+            </div>
+            {catTasks.map(task => (
+              <TaskCard key={task.id} task={task}
+                subtasks={subtasks.filter(s => s.task_id === task.id)}
+                currentUser={currentUser}
+                onUpdate={handleUpdate} onDelete={handleDelete}
+                onAddSubtask={handleAddSubtask} onToggleSubtask={handleToggleSubtask}
+                onDeleteSubtask={handleDeleteSubtask}
+              />
+            ))}
+          </div>
+        );
+      })}
+    </>
+  );
+
+  const statsData = [
+    { label: "Total",       value: tasks.length,                                                 icon: "◈", color: C.textPrimary },
+    { label: "Completadas", value: done,                                                          icon: "✓", color: C.greenForest },
+    { label: "En curso",    value: tasks.filter(t => t.progress > 0 && t.progress < 100).length, icon: "↻", color: userColor },
+    { label: "Pendientes",  value: tasks.filter(t => t.progress === 0).length,                   icon: "○", color: C.khaki },
+  ];
+
+  const categoryFilter = (
+    <div style={{
+      padding: isMobile ? "10px 14px" : "12px 24px",
+      display: "flex", gap: 7, overflowX: "auto",
+      WebkitOverflowScrolling: "touch",
+      scrollbarWidth: "none", msOverflowStyle: "none",
+    }}>
+      {allCategories.map(cat => (
+        <button key={cat} onClick={() => setActiveCategory(cat)} style={{
+          padding: "6px 14px", borderRadius: 20,
+          background: activeCategory === cat ? `${userColor}18` : "rgba(255,255,255,0.6)",
+          border: activeCategory === cat ? `1px solid ${userColor}66` : `1px solid ${C.borderLight}`,
+          color: activeCategory === cat ? userColor : C.textSecondary,
+          cursor: "pointer", fontSize: 11, fontWeight: 700, whiteSpace: "nowrap",
+          fontFamily: "var(--font-space-mono), monospace", transition: "all 0.18s",
+          boxShadow: activeCategory === cat ? `0 2px 8px ${userColor}20` : "none",
+        }}>
+          {cat !== "Todas" && CAT_ICONS[cat] + " "}{cat}
+        </button>
+      ))}
+    </div>
+  );
+
+  // ── LOADER ────────────────────────────────────────────────
+  const loader = (
+    <div style={{ textAlign: "center", padding: "80px 0" }}>
+      <div style={{
+        width: 38, height: 38, border: `3px solid rgba(94,125,90,0.2)`,
+        borderTop: `3px solid ${userColor}`, borderRadius: "50%",
+        animation: "spin 1s linear infinite", margin: "0 auto 14px",
+      }} />
+      <p style={{ color: C.textMuted, fontFamily: "monospace", fontSize: 11, letterSpacing: 1 }}>
+        cargando tareas...
+      </p>
+    </div>
+  );
+
+  // ════════════════════════════════════════════════════════
+  // MOBILE LAYOUT  (< 768px)
+  // ════════════════════════════════════════════════════════
+  if (isMobile) {
+    return (
+      <div style={{ minHeight: "100vh", background: C.bgPage, color: C.textPrimary }}>
+
+        {/* Header Mobile */}
+        <header style={{
+          position: "sticky", top: 0, zIndex: 100,
+          background: "rgba(237,229,216,0.93)",
+          borderBottom: `1px solid ${C.borderLight}`,
+          backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)",
+          boxShadow: `0 1px 10px ${C.shadow}`,
+        }}>
+          {/* Fila 1: logo + progreso */}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 14px 6px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <div style={{
+                width: 28, height: 28, borderRadius: "50%",
+                background: `linear-gradient(135deg, ${C.greenLichen}, ${C.greenForest})`,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontSize: 13,
+              }}>🗺</div>
+              <div>
+                <div style={{ fontFamily: "var(--font-space-grotesk), sans-serif", fontSize: 13, fontWeight: 700, color: C.textPrimary, lineHeight: 1.1 }}>Squad Tracker</div>
+              </div>
+              <span style={{
+                fontSize: 9, padding: "2px 7px", borderRadius: 20,
+                background: `rgba(27,179,154,0.12)`, border: `1px solid rgba(27,179,154,0.3)`,
+                color: C.emerald, fontFamily: "monospace",
+              }}>● LIVE</span>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontSize: 8, color: C.textMuted, fontFamily: "monospace", textTransform: "uppercase", letterSpacing: 1 }}>Nahueroute</div>
+                <div style={{ fontSize: 18, fontWeight: 700, fontFamily: "var(--font-space-mono), monospace", color: userColor, lineHeight: 1.1 }}>{globalPct}%</div>
+              </div>
+              <Ring progress={globalPct} size={36} stroke={4} color={userColor} />
+            </div>
+          </div>
+          {/* Fila 2: botones */}
+          <div style={{ display: "flex", gap: 8, padding: "6px 14px 10px", justifyContent: "space-between" }}>
+            <button onClick={() => setShowSummary(true)} style={{
+              flex: 1, padding: "8px 0", borderRadius: 9,
+              background: "rgba(255,255,255,0.75)", border: `1px solid ${C.borderCard}`,
+              color: C.textSecondary, cursor: "pointer", fontSize: 12,
+              fontFamily: "var(--font-space-mono), monospace",
+            }}>📋 Resumen</button>
+            <button onClick={() => setShowAddModal(true)} style={{
+              flex: 2, padding: "8px 0", borderRadius: 9,
+              background: `linear-gradient(135deg, ${userColor}, ${C.greenForest})`,
+              border: "none", color: "#fff", cursor: "pointer",
+              fontSize: 13, fontWeight: 800, fontFamily: "var(--font-space-mono), monospace",
+              boxShadow: `0 3px 10px ${userColor}44`,
+            }}>+ Tarea</button>
+            <button onClick={() => setCurrentUser(null)} style={{
+              padding: "8px 12px", borderRadius: 9,
+              background: "rgba(255,255,255,0.7)", border: `1px solid ${C.borderCard}`,
+              color: C.textMuted, cursor: "pointer", fontSize: 15,
+            }}>⇄</button>
+          </div>
+        </header>
+
+        {/* Stats Mobile: 2x2 */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, padding: "10px 14px", borderBottom: `1px solid ${C.borderLight}` }}>
+          {statsData.map(s => (
+            <div key={s.label} style={{
+              padding: "10px 14px",
+              background: "rgba(255,255,255,0.6)", border: `1px solid ${C.borderLight}`,
+              borderRadius: 10, backdropFilter: "blur(8px)",
+            }}>
+              <div style={{ fontSize: 22, fontWeight: 800, fontFamily: "var(--font-space-mono), monospace", color: s.color }}>
+                {loading ? "—" : s.value}
+              </div>
+              <div style={{ fontSize: 10, color: C.textMuted, fontFamily: "monospace", marginTop: 2 }}>{s.icon} {s.label}</div>
+            </div>
+          ))}
+        </div>
+
+        {categoryFilter}
+
+        {/* Task Grid Mobile: 1 columna */}
+        <main style={{ padding: "4px 14px 60px" }}>
+          {loading ? loader : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 14, animation: "fadeUp 0.4s ease" }}>
+              {taskGrid}
+            </div>
+          )}
+        </main>
+
+        {showAddModal && <AddTaskModal currentUser={currentUser} onAdd={handleAdd} onClose={() => setShowAddModal(false)} />}
+        {showSummary  && <SummaryModal tasks={tasks} subtasks={subtasks} onClose={() => setShowSummary(false)} />}
+      </div>
+    );
+  }
+
+  // ════════════════════════════════════════════════════════
+  // DESKTOP LAYOUT  (≥ 768px) — idéntico al original
+  // ════════════════════════════════════════════════════════
   return (
     <div style={{
       minHeight: "100vh", background: C.bgPage, color: C.textPrimary,
@@ -804,16 +1004,15 @@ export default function SquadTracker() {
       `,
     }}>
 
-      {/* ── HEADER ── */}
-      <header className="sq-header" style={{
-        borderBottom: `1px solid ${C.borderLight}`,
+      {/* HEADER DESKTOP */}
+      <header style={{
+        borderBottom: `1px solid ${C.borderLight}`, padding: "13px 24px",
+        display: "flex", alignItems: "center", justifyContent: "space-between",
         backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)",
         position: "sticky", top: 0, zIndex: 100,
-        background: "rgba(237,229,216,0.88)",
-        boxShadow: `0 1px 12px ${C.shadow}`,
+        background: "rgba(237,229,216,0.88)", boxShadow: `0 1px 12px ${C.shadow}`,
       }}>
-        {/* Brand */}
-        <div className="sq-header-brand">
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <div style={{
             display: "flex", alignItems: "center", gap: 9,
             padding: "6px 14px 6px 9px",
@@ -828,73 +1027,62 @@ export default function SquadTracker() {
             }}>🗺</div>
             <div>
               <div style={{ fontFamily: "var(--font-space-grotesk), sans-serif", fontSize: 13, fontWeight: 700, color: C.textPrimary, lineHeight: 1.1 }}>Squad Tracker</div>
-              <div className="sq-brand-sub" style={{ fontFamily: "var(--font-space-mono), monospace", fontSize: 8, color: C.greenLichen, letterSpacing: 1.8, textTransform: "uppercase" }}>by Interius</div>
+              <div style={{ fontFamily: "var(--font-space-mono), monospace", fontSize: 8, color: C.greenLichen, letterSpacing: 1.8, textTransform: "uppercase" }}>by Interius</div>
             </div>
           </div>
           <span style={{
-            fontSize: 10, padding: "2px 8px", borderRadius: 20,
+            fontSize: 10, padding: "2px 9px", borderRadius: 20,
             background: `rgba(27,179,154,0.12)`, border: `1px solid rgba(27,179,154,0.3)`,
             color: C.emerald, fontFamily: "var(--font-space-mono), monospace",
           }}>● LIVE</span>
         </div>
 
-        {/* Progreso */}
-        <div className="sq-header-progress" style={{ alignItems: "center", gap: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <div style={{ textAlign: "right" }}>
-            <div style={{ fontSize: 9, color: C.textMuted, fontFamily: "monospace", letterSpacing: 1.2, textTransform: "uppercase" }}>Nahueroute</div>
-            <div style={{ fontSize: 20, fontWeight: 700, fontFamily: "var(--font-space-mono), monospace", color: userColor, lineHeight: 1.1 }}>{globalPct}%</div>
+            <div style={{ fontSize: 9, color: C.textMuted, fontFamily: "monospace", letterSpacing: 1.4, textTransform: "uppercase" }}>App Nahueroute</div>
+            <div style={{ fontSize: 22, fontWeight: 700, fontFamily: "var(--font-space-mono), monospace", color: userColor, lineHeight: 1.1 }}>{globalPct}%</div>
           </div>
-          <Ring progress={globalPct} size={42} stroke={4} color={userColor} />
+          <Ring progress={globalPct} size={48} stroke={5} color={userColor} />
         </div>
 
-        {/* Acciones */}
-        <div className="sq-header-actions">
-          <div className="sq-avatars" style={{ marginRight: 2 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ display: "flex", marginRight: 4 }}>
             {TEAM.map(name => (
               <div key={name} title={name} style={{
-                width: 28, height: 28, borderRadius: "50%",
+                width: 30, height: 30, borderRadius: "50%",
                 background: `linear-gradient(135deg, ${TEAM_COLORS[name]}cc, ${TEAM_COLORS[name]})`,
                 border: `2px solid ${C.bgPage}`,
                 display: "flex", alignItems: "center", justifyContent: "center",
-                fontSize: 11, fontWeight: 800, color: "#fff", marginLeft: -6,
-                opacity: name === currentUser ? 1 : 0.38, transition: "opacity 0.2s",
+                fontSize: 11, fontWeight: 800, color: "#fff", marginLeft: -7,
+                opacity: name === currentUser ? 1 : 0.4,
                 boxShadow: name === currentUser ? `0 0 0 2px ${TEAM_COLORS[name]}88` : "none",
               }}>{name[0]}</div>
             ))}
           </div>
-
           <button onClick={() => setShowSummary(true)} style={{
-            padding: "7px 12px", borderRadius: 9,
+            padding: "7px 13px", borderRadius: 9,
             background: "rgba(255,255,255,0.72)", border: `1px solid ${C.borderCard}`,
             color: C.textSecondary, cursor: "pointer", fontSize: 12,
             fontFamily: "var(--font-space-mono), monospace",
-            boxShadow: `0 1px 4px ${C.shadow}`, flexShrink: 0,
+            boxShadow: `0 1px 4px ${C.shadow}`,
           }}>📋 Resumen</button>
-
           <button onClick={() => setShowAddModal(true)} style={{
-            padding: "7px 14px", borderRadius: 9,
+            padding: "7px 16px", borderRadius: 9,
             background: `linear-gradient(135deg, ${userColor}, ${C.greenForest})`,
             border: "none", color: "#fff", cursor: "pointer",
             fontSize: 13, fontWeight: 800, fontFamily: "var(--font-space-mono), monospace",
-            boxShadow: `0 3px 12px ${userColor}44`, flexShrink: 0,
+            boxShadow: `0 3px 12px ${userColor}44`,
           }}>+ Tarea</button>
-
           <button onClick={() => setCurrentUser(null)} style={{
             background: "rgba(255,255,255,0.65)", border: `1px solid ${C.borderCard}`,
-            color: C.textMuted, cursor: "pointer", fontSize: 15, padding: "7px 9px",
-            borderRadius: 9, flexShrink: 0,
+            color: C.textMuted, cursor: "pointer", fontSize: 15, padding: "7px 10px", borderRadius: 9,
           }} title="Cambiar usuario">⇄</button>
         </div>
       </header>
 
-      {/* ── STATS ── */}
-      <div className="sq-stats" style={{ borderBottom: `1px solid ${C.borderLight}` }}>
-        {[
-          { label: "Total",       value: tasks.length,                                                 icon: "◈", color: C.textPrimary },
-          { label: "Completadas", value: done,                                                          icon: "✓", color: C.greenForest },
-          { label: "En curso",    value: tasks.filter(t => t.progress > 0 && t.progress < 100).length, icon: "↻", color: userColor },
-          { label: "Pendientes",  value: tasks.filter(t => t.progress === 0).length,                   icon: "○", color: C.khaki },
-        ].map(s => (
+      {/* STATS DESKTOP: 4 en fila */}
+      <div style={{ display: "flex", padding: "12px 24px", gap: 8, borderBottom: `1px solid ${C.borderLight}` }}>
+        {statsData.map(s => (
           <div key={s.label} style={{
             flex: 1, padding: "10px 16px",
             background: "rgba(255,255,255,0.55)", border: `1px solid ${C.borderLight}`,
@@ -903,105 +1091,29 @@ export default function SquadTracker() {
             <div style={{ fontSize: 22, fontWeight: 800, fontFamily: "var(--font-space-mono), monospace", color: s.color }}>
               {loading ? "—" : s.value}
             </div>
-            <div style={{ fontSize: 10, color: C.textMuted, fontFamily: "monospace", marginTop: 2 }}>
-              {s.icon} {s.label}
-            </div>
+            <div style={{ fontSize: 10, color: C.textMuted, fontFamily: "monospace", marginTop: 2 }}>{s.icon} {s.label}</div>
           </div>
         ))}
       </div>
 
-      {/* ── CATEGORY FILTER ── */}
-      <div className="sq-categories">
-        {allCategories.map(cat => (
-          <button key={cat} onClick={() => setActiveCategory(cat)} style={{
-            padding: "6px 16px", borderRadius: 20,
-            background: activeCategory === cat ? `${userColor}18` : "rgba(255,255,255,0.6)",
-            border: activeCategory === cat ? `1px solid ${userColor}66` : `1px solid ${C.borderLight}`,
-            color: activeCategory === cat ? userColor : C.textSecondary,
-            cursor: "pointer", fontSize: 11, fontWeight: 700, whiteSpace: "nowrap",
-            fontFamily: "var(--font-space-mono), monospace", transition: "all 0.18s",
-            boxShadow: activeCategory === cat ? `0 2px 8px ${userColor}20` : "none",
+      {categoryFilter}
+
+      {/* TASK GRID DESKTOP: auto-fill multi-columna */}
+      <main style={{ padding: "4px 24px 56px" }}>
+        {loading ? loader : (
+          <div style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fill, minmax(290px, 1fr))",
+            gap: 16, animation: "fadeUp 0.4s ease",
           }}>
-            {cat !== "Todas" && CAT_ICONS[cat] + " "}{cat}
-          </button>
-        ))}
-      </div>
-
-      {/* ── COLUMNS ── */}
-      <main className="sq-main" style={{ padding: "4px 24px 56px" }}>
-        {loading ? (
-          <div style={{ textAlign: "center", padding: "80px 0" }}>
-            <div style={{
-              width: 38, height: 38, border: `3px solid rgba(94,125,90,0.2)`,
-              borderTop: `3px solid ${userColor}`, borderRadius: "50%",
-              animation: "spin 1s linear infinite", margin: "0 auto 14px",
-            }} />
-            <p style={{ color: C.textMuted, fontFamily: "monospace", fontSize: 11, letterSpacing: 1 }}>
-              cargando tareas...
-            </p>
-          </div>
-        ) : (
-          <div className="sq-grid">
-            {Object.keys(grouped).length === 0 && (
-              <div style={{ gridColumn: "1/-1", textAlign: "center", padding: "70px 0", color: C.textMuted, fontFamily: "monospace", fontSize: 12 }}>
-                Sin tareas todavía — ¡presiona &quot;+ Tarea&quot;!
-              </div>
-            )}
-            {Object.entries(grouped).map(([cat, catTasks]) => {
-              const catPct  = calcProgress(catTasks);
-              const isNahue = cat === "App Nahueroute";
-              return (
-                <div key={cat} style={{
-                  ...glass,
-                  borderRadius: 16, padding: 16, overflow: "hidden",
-                  ...(isNahue ? { borderTop: `2px solid ${C.emerald}` } : {}),
-                }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-                      <span style={{ fontSize: 15 }}>{CAT_ICONS[cat]}</span>
-                      <span style={{ fontFamily: "var(--font-space-grotesk), sans-serif", fontWeight: 700, fontSize: 13, color: C.textPrimary }}>{cat}</span>
-                    </div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <span style={{ fontSize: 10, color: C.textMuted, fontFamily: "monospace" }}>
-                        {catTasks.filter(t => t.status === "done").length}/{catTasks.length}
-                      </span>
-                      <div style={{ width: 40, height: 4, borderRadius: 4, background: "rgba(94,125,90,0.12)", overflow: "hidden" }}>
-                        <div style={{
-                          height: "100%", width: `${catPct}%`,
-                          background: isNahue
-                            ? `linear-gradient(90deg, ${C.greenLichen}, ${C.emerald})`
-                            : `linear-gradient(90deg, ${userColor}88, ${userColor})`,
-                          borderRadius: 4, transition: "width 0.8s",
-                        }} />
-                      </div>
-                    </div>
-                  </div>
-                  {catTasks.map(task => (
-                    <TaskCard
-                      key={task.id}
-                      task={task}
-                      subtasks={subtasks.filter(s => s.task_id === task.id)}
-                      currentUser={currentUser}
-                      onUpdate={handleUpdate}
-                      onDelete={handleDelete}
-                      onAddSubtask={handleAddSubtask}
-                      onToggleSubtask={handleToggleSubtask}
-                      onDeleteSubtask={handleDeleteSubtask}
-                    />
-                  ))}
-                </div>
-              );
-            })}
+            {taskGrid}
           </div>
         )}
       </main>
 
-      {showAddModal && (
-        <AddTaskModal currentUser={currentUser} onAdd={handleAdd} onClose={() => setShowAddModal(false)} />
-      )}
-      {showSummary && (
-        <SummaryModal tasks={tasks} subtasks={subtasks} onClose={() => setShowSummary(false)} />
-      )}
+      {showAddModal && <AddTaskModal currentUser={currentUser} onAdd={handleAdd} onClose={() => setShowAddModal(false)} />}
+      {showSummary  && <SummaryModal tasks={tasks} subtasks={subtasks} onClose={() => setShowSummary(false)} />}
     </div>
   );
 }
+
