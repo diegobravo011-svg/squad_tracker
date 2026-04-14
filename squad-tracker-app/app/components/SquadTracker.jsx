@@ -99,8 +99,14 @@ function timeAgo(iso) {
   return `hace ${Math.floor(d / 86400)}d`;
 }
 function calcProgress(tasks) {
-  if (!tasks.length) return 0;
-  return Math.round(tasks.reduce((s, t) => s + (t.progress || 0), 0) / tasks.length);
+  // Solo tareas activas (no completadas) para calcular progreso real
+  const activeTasks = tasks.filter(t => t.status !== "done");
+  if (!activeTasks.length) {
+    // Si todas están done, verificar si realmente hay tareas
+    if (!tasks.length) return 0;
+    return 100;
+  }
+  return Math.round(activeTasks.reduce((s, t) => s + (t.progress || 0), 0) / activeTasks.length);
 }
 function progressLabel(pct) {
   if (pct === 0)  return { text: "Sin iniciar",       icon: "○",  color: C.textMuted };
@@ -144,24 +150,38 @@ function MiniRing({ progress, color }) {
 // ============================================================
 // TASK CARD
 // ============================================================
-function TaskCard({ task, subtasks, currentUser, onUpdate, onDelete, onAddSubtask, onToggleSubtask, onDeleteSubtask }) {
+function TaskCard({ task, subtasks, currentUser, onUpdate, onDelete, onRename, onAddSubtask, onToggleSubtask, onDeleteSubtask }) {
   const [localPct, setLocalPct]         = useState(task.progress || 0);
   const [showNote, setShowNote]         = useState(false);
   const [noteText, setNoteText]         = useState("");
   const [showSubs, setShowSubs]         = useState(false);
   const [newSub, setNewSub]             = useState("");
   const [addingSub, setAddingSub]       = useState(false);
-  const noteRef = useRef(null);
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [newTitle, setNewTitle]         = useState(task.title);
+  const [showMenu, setShowMenu]         = useState(false);
+  const noteRef  = useRef(null);
+  const titleRef = useRef(null);
+  const menuRef  = useRef(null);
 
   const color  = TEAM_COLORS[task.assignee] || C.greenLichen;
-  const isOwn  = task.assignee === currentUser;
-  // Cualquier miembro del equipo puede editar el progreso (trabajo colaborativo)
-  const canEdit = true;
+  const canEdit = true; // Cualquier miembro del equipo puede editar el progreso
   const label  = progressLabel(localPct);
   const doneColor = localPct === 100 ? C.greenForest : color;
 
   useEffect(() => setLocalPct(task.progress || 0), [task.progress]);
   useEffect(() => { if (showNote && noteRef.current) noteRef.current.focus(); }, [showNote]);
+  useEffect(() => { if (editingTitle && titleRef.current) titleRef.current.focus(); }, [editingTitle]);
+
+  // Cerrar menú al hacer clic fuera
+  useEffect(() => {
+    if (!showMenu) return;
+    function handleClickOutside(e) {
+      if (menuRef.current && !menuRef.current.contains(e.target)) setShowMenu(false);
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [showMenu]);
 
   function handleSliderChange(e) {
     setLocalPct(parseInt(e.target.value));
@@ -191,6 +211,17 @@ function TaskCard({ task, subtasks, currentUser, onUpdate, onDelete, onAddSubtas
     setAddingSub(false);
   }
 
+  function handleSaveTitle() {
+    const trimmed = newTitle.trim();
+    if (trimmed && trimmed !== task.title) {
+      onRename(task.id, trimmed);
+    } else {
+      setNewTitle(task.title);
+    }
+    setEditingTitle(false);
+    setShowMenu(false);
+  }
+
   const completedSubs = subtasks.filter(s => s.completed).length;
 
   return (
@@ -200,7 +231,6 @@ function TaskCard({ task, subtasks, currentUser, onUpdate, onDelete, onAddSubtas
       borderRadius: 12,
       marginBottom: 10,
       transition: "all 0.22s",
-      opacity: task.status === "done" ? 0.68 : 1,
       overflow: "hidden",
     }}
       onMouseEnter={e => { e.currentTarget.style.background = C.bgCardHov; e.currentTarget.style.boxShadow = `0 6px 24px ${C.shadowMd}`; e.currentTarget.style.transform = "translateY(-1px)"; }}
@@ -211,11 +241,42 @@ function TaskCard({ task, subtasks, currentUser, onUpdate, onDelete, onAddSubtas
         {/* ─ Título + Ring ─ */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
           <div style={{ flex: 1 }}>
-            <p style={{
-              margin: 0, fontSize: 13, fontWeight: 600, color: C.textPrimary,
-              textDecoration: task.status === "done" ? "line-through" : "none",
-              opacity: task.status === "done" ? 0.55 : 1,
-            }}>{task.title}</p>
+            {editingTitle ? (
+              <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
+                <input
+                  ref={titleRef}
+                  value={newTitle}
+                  maxLength={100}
+                  onChange={e => setNewTitle(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === "Enter") handleSaveTitle();
+                    if (e.key === "Escape") { setNewTitle(task.title); setEditingTitle(false); }
+                  }}
+                  style={{
+                    flex: 1, padding: "4px 8px", borderRadius: 6,
+                    background: "rgba(255,255,255,0.9)",
+                    border: `1px solid ${color}66`,
+                    color: C.textPrimary, fontSize: 13, fontWeight: 600,
+                    outline: "none", fontFamily: "inherit",
+                  }}
+                />
+                <button onClick={handleSaveTitle} style={{
+                  padding: "4px 9px", borderRadius: 6, border: "none",
+                  background: color, color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 700,
+                }}>✓</button>
+                <button onClick={() => { setNewTitle(task.title); setEditingTitle(false); }} style={{
+                  padding: "4px 7px", borderRadius: 6,
+                  background: "rgba(26,19,15,0.06)", border: `1px solid ${C.borderLight}`,
+                  color: C.textMuted, cursor: "pointer", fontSize: 12,
+                }}>✗</button>
+              </div>
+            ) : (
+              <p style={{
+                margin: 0, fontSize: 13, fontWeight: 600, color: C.textPrimary,
+                textDecoration: task.status === "done" ? "line-through" : "none",
+                opacity: task.status === "done" ? 0.55 : 1,
+              }}>{task.title}</p>
+            )}
 
             {/* Badges */}
             <div style={{ display: "flex", gap: 6, marginTop: 4, alignItems: "center", flexWrap: "wrap" }}>
@@ -247,18 +308,64 @@ function TaskCard({ task, subtasks, currentUser, onUpdate, onDelete, onAddSubtas
             </div>
           </div>
 
-          <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
             <MiniRing progress={localPct} color={doneColor} />
-            {/* Solo el dueño puede eliminar */}
-            {isOwn && (
-              <button onClick={() => onDelete(task.id)} style={{
-                background: "none", border: "none", color: "rgba(26,19,15,0.18)",
-                cursor: "pointer", fontSize: 14, padding: 4, transition: "color 0.2s",
-              }}
-                onMouseEnter={e => e.target.style.color = "#c0392b"}
-                onMouseLeave={e => e.target.style.color = "rgba(26,19,15,0.18)"}
-              >✕</button>
-            )}
+
+            {/* Menú de opciones ⋮ */}
+            <div style={{ position: "relative" }} ref={menuRef}>
+              <button
+                onClick={() => setShowMenu(m => !m)}
+                style={{
+                  background: "none", border: "none",
+                  color: showMenu ? C.textSecondary : "rgba(26,19,15,0.25)",
+                  cursor: "pointer", fontSize: 18, padding: "2px 5px",
+                  lineHeight: 1, transition: "color 0.2s", borderRadius: 6,
+                }}
+                onMouseEnter={e => e.target.style.color = C.textSecondary}
+                onMouseLeave={e => { if (!showMenu) e.target.style.color = "rgba(26,19,15,0.25)"; }}
+                title="Opciones"
+              >⋮</button>
+
+              {showMenu && (
+                <div style={{
+                  position: "absolute", right: 0, top: "calc(100% + 4px)",
+                  background: C.bgModal, border: `1px solid ${C.borderCard}`,
+                  borderRadius: 10, boxShadow: `0 8px 24px ${C.shadowMd}`,
+                  minWidth: 160, zIndex: 200, overflow: "hidden",
+                  animation: "fadeUp 0.15s ease",
+                }}>
+                  <button
+                    onClick={() => { setEditingTitle(true); setShowMenu(false); }}
+                    style={{
+                      width: "100%", padding: "10px 14px", background: "none",
+                      border: "none", textAlign: "left", cursor: "pointer",
+                      fontSize: 12, color: C.textSecondary, fontFamily: "inherit",
+                      display: "flex", alignItems: "center", gap: 8,
+                      borderBottom: `1px solid ${C.borderLight}`,
+                      transition: "background 0.15s",
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.background = "rgba(94,125,90,0.07)"}
+                    onMouseLeave={e => e.currentTarget.style.background = "none"}
+                  >
+                    <span style={{ fontSize: 14 }}>✎</span> Renombrar actividad
+                  </button>
+                  <button
+                    onClick={() => { setShowMenu(false); onDelete(task.id); }}
+                    style={{
+                      width: "100%", padding: "10px 14px", background: "none",
+                      border: "none", textAlign: "left", cursor: "pointer",
+                      fontSize: 12, color: "#c0392b", fontFamily: "inherit",
+                      display: "flex", alignItems: "center", gap: 8,
+                      transition: "background 0.15s",
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.background = "rgba(192,57,43,0.07)"}
+                    onMouseLeave={e => e.currentTarget.style.background = "none"}
+                  >
+                    <span style={{ fontSize: 14 }}>✕</span> Eliminar actividad
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
@@ -383,16 +490,14 @@ function TaskCard({ task, subtasks, currentUser, onUpdate, onDelete, onAddSubtas
                   textDecoration: s.completed ? "line-through" : "none",
                   transition: "all 0.2s",
                 }}>{s.title}</span>
-                {/* Solo el dueño elimina subtareas */}
-                {isOwn && (
-                  <button onClick={() => onDeleteSubtask(s.id)} style={{
-                    background: "none", border: "none", color: "rgba(26,19,15,0.15)",
-                    cursor: "pointer", fontSize: 12, padding: 2, transition: "color 0.15s",
-                  }}
-                    onMouseEnter={e => e.target.style.color = "#c0392b"}
-                    onMouseLeave={e => e.target.style.color = "rgba(26,19,15,0.15)"}
-                  >✕</button>
-                )}
+                {/* Todos pueden eliminar subtareas */}
+                <button onClick={() => onDeleteSubtask(s.id)} style={{
+                  background: "none", border: "none", color: "rgba(26,19,15,0.15)",
+                  cursor: "pointer", fontSize: 12, padding: 2, transition: "color 0.15s",
+                }}
+                  onMouseEnter={e => e.target.style.color = "#c0392b"}
+                  onMouseLeave={e => e.target.style.color = "rgba(26,19,15,0.15)"}
+                >✕</button>
               </div>
             ))}
 
@@ -641,6 +746,71 @@ function SummaryModal({ tasks, subtasks, onClose }) {
 }
 
 // ============================================================
+// COMPLETED SECTION — Carpeta de trabajos terminados
+// ============================================================
+function CompletedSection({ tasks, subtasks, currentUser, onUpdate, onDelete, onRename, onAddSubtask, onToggleSubtask, onDeleteSubtask, isMobile }) {
+  const [open, setOpen] = useState(false);
+  if (!tasks.length) return null;
+
+  return (
+    <div style={{
+      ...glass,
+      borderRadius: 16,
+      overflow: "hidden",
+      borderTop: `2px solid ${C.greenForest}`,
+      marginTop: 8,
+    }}>
+      {/* Header colapsable */}
+      <button
+        onClick={() => setOpen(o => !o)}
+        style={{
+          width: "100%", padding: "14px 16px",
+          background: "none", border: "none", cursor: "pointer",
+          display: "flex", alignItems: "center", gap: 10,
+          transition: "background 0.15s",
+        }}
+        onMouseEnter={e => e.currentTarget.style.background = "rgba(45,90,39,0.05)"}
+        onMouseLeave={e => e.currentTarget.style.background = "none"}
+      >
+        <span style={{
+          fontSize: 16, transition: "transform 0.25s", display: "inline-block",
+          transform: open ? "rotate(0deg)" : "rotate(-90deg)",
+        }}>▾</span>
+        <span style={{ fontSize: 16 }}>✅</span>
+        <span style={{
+          fontFamily: "var(--font-space-grotesk), sans-serif",
+          fontWeight: 700, fontSize: 13, color: C.greenForest,
+        }}>
+          Trabajos Terminados
+        </span>
+        <span style={{
+          marginLeft: "auto",
+          background: `${C.greenForest}18`, color: C.greenForest,
+          border: `1px solid ${C.greenForest}33`,
+          borderRadius: 20, padding: "1px 10px",
+          fontSize: 11, fontWeight: 700,
+          fontFamily: "var(--font-space-mono), monospace",
+        }}>{tasks.length} completada{tasks.length !== 1 ? "s" : ""}</span>
+      </button>
+
+      {open && (
+        <div style={{ padding: "0 16px 16px", animation: "fadeUp 0.2s ease" }}>
+          {tasks.map(task => (
+            <TaskCard key={task.id} task={task}
+              subtasks={subtasks.filter(s => s.task_id === task.id)}
+              currentUser={currentUser}
+              onUpdate={onUpdate} onDelete={onDelete} onRename={onRename}
+              onAddSubtask={onAddSubtask} onToggleSubtask={onToggleSubtask}
+              onDeleteSubtask={onDeleteSubtask}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================
 // MAIN APP
 // ============================================================
 export default function SquadTracker() {
@@ -689,6 +859,10 @@ export default function SquadTracker() {
     setSubtasks(prev => prev.filter(s => s.task_id !== id));
     db.delete("tasks", id);
   }
+  function handleRename(id, newTitle) {
+    setTasks(prev => prev.map(t => t.id === id ? { ...t, title: newTitle } : t));
+    db.update("tasks", id, { title: newTitle });
+  }
   async function handleAdd({ title, description, category }) {
     const payload = {
       title, description: description || null,
@@ -716,16 +890,137 @@ export default function SquadTracker() {
     db.delete("subtasks", subId);
   }
 
-  const nahueTasks = tasks.filter(t => t.category === "App Nahueroute");
-  const globalPct  = calcProgress(nahueTasks.length ? nahueTasks : tasks);
-  const allCategories = ["Todas", ...CATEGORIES.filter(c => tasks.some(t => t.category === c))];
-  const filtered = activeCategory === "Todas" ? tasks : tasks.filter(t => t.category === activeCategory);
+  // ── Separar tareas activas y completadas ─────────────────
+  const activeTasks    = tasks.filter(t => t.status !== "done");
+  const completedTasks = tasks.filter(t => t.status === "done");
+
+  // Progreso global: solo tareas activas de App Nahueroute
+  const nahueTasks = activeTasks.filter(t => t.category === "App Nahueroute");
+  const globalPct  = calcProgress(nahueTasks.length ? nahueTasks : activeTasks);
+
+  const allCategories = ["Todas", ...CATEGORIES.filter(c => activeTasks.some(t => t.category === c))];
+  const filtered = activeCategory === "Todas" ? activeTasks : activeTasks.filter(t => t.category === activeCategory);
   const grouped  = CATEGORIES.reduce((acc, cat) => {
     const ct = filtered.filter(t => t.category === cat);
     if (ct.length) acc[cat] = ct;
     return acc;
   }, {});
-  const done = tasks.filter(t => t.status === "done").length;
+
+  // Tareas completadas filtradas por categoría (para la sección de terminados)
+  const filteredCompleted = activeCategory === "Todas"
+    ? completedTasks
+    : completedTasks.filter(t => t.category === activeCategory);
+
+  const done = completedTasks.length;
+
+  // ── TASK GRID compartido ──────────────────────────────────
+  const taskGrid = (
+    <>
+      {Object.keys(grouped).length === 0 && (
+        <div style={{ textAlign: "center", padding: "70px 0", color: C.textMuted, fontFamily: "monospace", fontSize: 12 }}>
+          Sin tareas pendientes — ¡presiona &quot;+ Tarea&quot;!
+        </div>
+      )}
+      {Object.entries(grouped).map(([cat, catTasks]) => {
+        const catPct  = calcProgress(catTasks);
+        const isNahue = cat === "App Nahueroute";
+        return (
+          <div key={cat} style={{
+            ...glass, borderRadius: 16, padding: 16, overflow: "hidden",
+            ...(isNahue ? { borderTop: `2px solid ${C.emerald}` } : {}),
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                <span style={{ fontSize: 15 }}>{CAT_ICONS[cat]}</span>
+                <span style={{ fontFamily: "var(--font-space-grotesk), sans-serif", fontWeight: 700, fontSize: 13, color: C.textPrimary }}>{cat}</span>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 10, color: C.textMuted, fontFamily: "monospace" }}>
+                  {catTasks.filter(t => t.progress === 100).length}/{catTasks.length}
+                </span>
+                <div style={{ width: 40, height: 4, borderRadius: 4, background: "rgba(94,125,90,0.12)", overflow: "hidden" }}>
+                  <div style={{
+                    height: "100%", width: `${catPct}%`,
+                    background: isNahue
+                      ? `linear-gradient(90deg, ${C.greenLichen}, ${C.emerald})`
+                      : `linear-gradient(90deg, ${TEAM_COLORS[currentUser] || C.greenLichen}88, ${TEAM_COLORS[currentUser] || C.greenLichen})`,
+                    borderRadius: 4, transition: "width 0.8s",
+                  }} />
+                </div>
+              </div>
+            </div>
+            {catTasks.map(task => (
+              <TaskCard key={task.id} task={task}
+                subtasks={subtasks.filter(s => s.task_id === task.id)}
+                currentUser={currentUser}
+                onUpdate={handleUpdate} onDelete={handleDelete} onRename={handleRename}
+                onAddSubtask={handleAddSubtask} onToggleSubtask={handleToggleSubtask}
+                onDeleteSubtask={handleDeleteSubtask}
+              />
+            ))}
+          </div>
+        );
+      })}
+
+      {/* Sección de trabajos terminados */}
+      <CompletedSection
+        tasks={filteredCompleted}
+        subtasks={subtasks}
+        currentUser={currentUser}
+        onUpdate={handleUpdate}
+        onDelete={handleDelete}
+        onRename={handleRename}
+        onAddSubtask={handleAddSubtask}
+        onToggleSubtask={handleToggleSubtask}
+        onDeleteSubtask={handleDeleteSubtask}
+        isMobile={isMobile}
+      />
+    </>
+  );
+
+  const statsData = [
+    { label: "Total",       value: tasks.length,                                                    icon: "◈", color: C.textPrimary },
+    { label: "Completadas", value: done,                                                             icon: "✓", color: C.greenForest },
+    { label: "En curso",    value: activeTasks.filter(t => t.progress > 0 && t.progress < 100).length, icon: "↻", color: TEAM_COLORS[currentUser] || C.greenLichen },
+    { label: "Pendientes",  value: activeTasks.filter(t => t.progress === 0).length,                icon: "○", color: C.khaki },
+  ];
+
+  const categoryFilter = (
+    <div style={{
+      padding: isMobile ? "10px 14px" : "12px 24px",
+      display: "flex", gap: 7, overflowX: "auto",
+      WebkitOverflowScrolling: "touch",
+      scrollbarWidth: "none", msOverflowStyle: "none",
+    }}>
+      {allCategories.map(cat => (
+        <button key={cat} onClick={() => setActiveCategory(cat)} style={{
+          padding: "6px 14px", borderRadius: 20,
+          background: activeCategory === cat ? `${TEAM_COLORS[currentUser] || C.greenLichen}18` : "rgba(255,255,255,0.6)",
+          border: activeCategory === cat ? `1px solid ${TEAM_COLORS[currentUser] || C.greenLichen}66` : `1px solid ${C.borderLight}`,
+          color: activeCategory === cat ? TEAM_COLORS[currentUser] || C.greenLichen : C.textSecondary,
+          cursor: "pointer", fontSize: 11, fontWeight: 700, whiteSpace: "nowrap",
+          fontFamily: "var(--font-space-mono), monospace", transition: "all 0.18s",
+          boxShadow: activeCategory === cat ? `0 2px 8px ${TEAM_COLORS[currentUser] || C.greenLichen}20` : "none",
+        }}>
+          {cat !== "Todas" && CAT_ICONS[cat] + " "}{cat}
+        </button>
+      ))}
+    </div>
+  );
+
+  // ── LOADER ────────────────────────────────────────────────
+  const loader = (
+    <div style={{ textAlign: "center", padding: "80px 0" }}>
+      <div style={{
+        width: 38, height: 38, border: `3px solid rgba(94,125,90,0.2)`,
+        borderTop: `3px solid ${TEAM_COLORS[currentUser] || C.emerald}`, borderRadius: "50%",
+        animation: "spin 1s linear infinite", margin: "0 auto 14px",
+      }} />
+      <p style={{ color: C.textMuted, fontFamily: "monospace", fontSize: 11, letterSpacing: 1 }}>
+        cargando tareas...
+      </p>
+    </div>
+  );
 
   // ── LOGIN ────────────────────────────────────────────────
   if (!currentUser) {
@@ -804,101 +1099,6 @@ export default function SquadTracker() {
   }
 
   const userColor = TEAM_COLORS[currentUser];
-
-  // ── TASK GRID compartido ──────────────────────────────────
-  const taskGrid = (
-    <>
-      {Object.keys(grouped).length === 0 && (
-        <div style={{ textAlign: "center", padding: "70px 0", color: C.textMuted, fontFamily: "monospace", fontSize: 12 }}>
-          Sin tareas todavía — ¡presiona &quot;+ Tarea&quot;!
-        </div>
-      )}
-      {Object.entries(grouped).map(([cat, catTasks]) => {
-        const catPct  = calcProgress(catTasks);
-        const isNahue = cat === "App Nahueroute";
-        return (
-          <div key={cat} style={{
-            ...glass, borderRadius: 16, padding: 16, overflow: "hidden",
-            ...(isNahue ? { borderTop: `2px solid ${C.emerald}` } : {}),
-          }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-                <span style={{ fontSize: 15 }}>{CAT_ICONS[cat]}</span>
-                <span style={{ fontFamily: "var(--font-space-grotesk), sans-serif", fontWeight: 700, fontSize: 13, color: C.textPrimary }}>{cat}</span>
-              </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ fontSize: 10, color: C.textMuted, fontFamily: "monospace" }}>
-                  {catTasks.filter(t => t.status === "done").length}/{catTasks.length}
-                </span>
-                <div style={{ width: 40, height: 4, borderRadius: 4, background: "rgba(94,125,90,0.12)", overflow: "hidden" }}>
-                  <div style={{
-                    height: "100%", width: `${catPct}%`,
-                    background: isNahue
-                      ? `linear-gradient(90deg, ${C.greenLichen}, ${C.emerald})`
-                      : `linear-gradient(90deg, ${userColor}88, ${userColor})`,
-                    borderRadius: 4, transition: "width 0.8s",
-                  }} />
-                </div>
-              </div>
-            </div>
-            {catTasks.map(task => (
-              <TaskCard key={task.id} task={task}
-                subtasks={subtasks.filter(s => s.task_id === task.id)}
-                currentUser={currentUser}
-                onUpdate={handleUpdate} onDelete={handleDelete}
-                onAddSubtask={handleAddSubtask} onToggleSubtask={handleToggleSubtask}
-                onDeleteSubtask={handleDeleteSubtask}
-              />
-            ))}
-          </div>
-        );
-      })}
-    </>
-  );
-
-  const statsData = [
-    { label: "Total",       value: tasks.length,                                                 icon: "◈", color: C.textPrimary },
-    { label: "Completadas", value: done,                                                          icon: "✓", color: C.greenForest },
-    { label: "En curso",    value: tasks.filter(t => t.progress > 0 && t.progress < 100).length, icon: "↻", color: userColor },
-    { label: "Pendientes",  value: tasks.filter(t => t.progress === 0).length,                   icon: "○", color: C.khaki },
-  ];
-
-  const categoryFilter = (
-    <div style={{
-      padding: isMobile ? "10px 14px" : "12px 24px",
-      display: "flex", gap: 7, overflowX: "auto",
-      WebkitOverflowScrolling: "touch",
-      scrollbarWidth: "none", msOverflowStyle: "none",
-    }}>
-      {allCategories.map(cat => (
-        <button key={cat} onClick={() => setActiveCategory(cat)} style={{
-          padding: "6px 14px", borderRadius: 20,
-          background: activeCategory === cat ? `${userColor}18` : "rgba(255,255,255,0.6)",
-          border: activeCategory === cat ? `1px solid ${userColor}66` : `1px solid ${C.borderLight}`,
-          color: activeCategory === cat ? userColor : C.textSecondary,
-          cursor: "pointer", fontSize: 11, fontWeight: 700, whiteSpace: "nowrap",
-          fontFamily: "var(--font-space-mono), monospace", transition: "all 0.18s",
-          boxShadow: activeCategory === cat ? `0 2px 8px ${userColor}20` : "none",
-        }}>
-          {cat !== "Todas" && CAT_ICONS[cat] + " "}{cat}
-        </button>
-      ))}
-    </div>
-  );
-
-  // ── LOADER ────────────────────────────────────────────────
-  const loader = (
-    <div style={{ textAlign: "center", padding: "80px 0" }}>
-      <div style={{
-        width: 38, height: 38, border: `3px solid rgba(94,125,90,0.2)`,
-        borderTop: `3px solid ${userColor}`, borderRadius: "50%",
-        animation: "spin 1s linear infinite", margin: "0 auto 14px",
-      }} />
-      <p style={{ color: C.textMuted, fontFamily: "monospace", fontSize: 11, letterSpacing: 1 }}>
-        cargando tareas...
-      </p>
-    </div>
-  );
 
   // ════════════════════════════════════════════════════════
   // MOBILE LAYOUT  (< 768px)
@@ -1122,4 +1322,3 @@ export default function SquadTracker() {
     </div>
   );
 }
-
